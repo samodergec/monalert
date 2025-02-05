@@ -27,14 +27,6 @@ func (ms *MemStorage) counterUpdate(metric string, value int64) {
 	ms.counter[metric] += value
 }
 
-/* func metricCollector(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost {
-
-	} else {
-		http.Error(w, "Only POST method is allowed", http.StatusBadRequest)
-	}
-} */
-
 func myMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
@@ -82,16 +74,16 @@ func metricHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func defaultHandler(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("default handler"))
+	w.WriteHeader(http.StatusBadRequest)
 }
 
 var validPath = regexp.MustCompile(`^/update/(gauge|counter)/([^/]+)/(\d+(\.\d*)?$)`)
 
 func getMetricNameAndValue(w http.ResponseWriter, r *http.Request) (string, string, string, error) {
 	m := validPath.FindStringSubmatch(r.URL.Path)
-	fmt.Println(m)
+	log.Println(m)
 	if m == nil {
-		matched, _ := regexp.MatchString(`(gauge|counter)/(\d+(\.\d*)?$)`, r.URL.Path)
+		matched, _ := regexp.MatchString(`(gauge|counter)/$`, r.URL.Path)
 		if matched {
 			w.WriteHeader(http.StatusNotFound)
 			return "", "none", "", errors.New("no name for metric")
@@ -112,7 +104,6 @@ func NewMemStorage() *MemStorage {
 }
 
 func main() {
-
 	http.HandleFunc("/", defaultHandler)
 	http.HandleFunc("/update/", myMiddleware(metricHandler))
 	err := http.ListenAndServe(`:8080`, nil)
