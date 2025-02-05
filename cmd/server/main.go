@@ -35,19 +35,29 @@ func (ms *MemStorage) counterUpdate(metric string, value int64) {
 	}
 } */
 
+func myMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			log.Println("hello from middleware")
+			next(w, r) // Передаем запрос дальше
+		} else {
+			http.Error(w, "Only POST method is allowed", http.StatusBadRequest)
+			return // Добавляем return, чтобы не выполнялся next()
+		}
+	}
+}
+
 func metricHandler(w http.ResponseWriter, r *http.Request) {
 	metricType, name, value, err := getMetricNameAndValue(w, r)
-	//w.Write([]byte("metricHandler"))
 	w.Header().Set("content-type", "text/plain")
 	fmt.Println(metricType, name, value, err)
-	if err!=nil{
-		if name ==""{
+	if err != nil {
+
+		if name == "none" {
 			http.Error(w, "no name for metric", http.StatusNotFound)
-			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		http.Error(w, "Incorrect metric type", http.StatusBadRequest)
-		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
@@ -69,24 +79,23 @@ func metricHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		ms.counterUpdate(name, v)
 	}
-
-	fmt.Println(ms)
 }
-
 
 func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("default handler"))
-	//fmt.Fprintln(w, ms)
 }
-
-
 
 var validPath = regexp.MustCompile(`^/update/(gauge|counter)/([^/]+)/(\d+(\.\d*)?$)`)
 
 func getMetricNameAndValue(w http.ResponseWriter, r *http.Request) (string, string, string, error) {
 	m := validPath.FindStringSubmatch(r.URL.Path)
+	fmt.Println(m)
 	if m == nil {
-		http.NotFound(w, r)
+		matched, _ := regexp.MatchString(`(gauge|counter)/(\d+(\.\d*)?$)`, r.URL.Path)
+		if matched {
+			w.WriteHeader(http.StatusNotFound)
+			return "", "none", "", errors.New("no name for metric")
+		}
 		return "", "", "", errors.New("invalid url address")
 	}
 
@@ -96,17 +105,16 @@ func getMetricNameAndValue(w http.ResponseWriter, r *http.Request) (string, stri
 var ms = NewMemStorage()
 
 func NewMemStorage() *MemStorage {
-    return &MemStorage{
-        gauge:   make(map[string]float64),
-        counter: make(map[string]int64),
-    }
+	return &MemStorage{
+		gauge:   make(map[string]float64),
+		counter: make(map[string]int64),
+	}
 }
 
 func main() {
 
-
 	http.HandleFunc("/", defaultHandler)
-	http.HandleFunc("/update/", metricHandler)
+	http.HandleFunc("/update/", myMiddleware(metricHandler))
 	err := http.ListenAndServe(`:8080`, nil)
 	if err != nil {
 		panic(err)
