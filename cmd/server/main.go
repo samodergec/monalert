@@ -42,7 +42,7 @@ func myMiddleware(next http.HandlerFunc) http.HandlerFunc {
 func metricHandler(w http.ResponseWriter, r *http.Request) {
 	metricType, name, value, err := getMetricNameAndValue(w, r)
 	w.Header().Set("content-type", "text/plain")
-	fmt.Println(metricType, name, value, err)
+	log.Println(metricType, name, value, err)
 	if err != nil {
 
 		if name == "none" {
