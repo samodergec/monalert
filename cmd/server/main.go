@@ -29,7 +29,7 @@ func (ms *MemStorage) counterUpdate(metric string, value int64) {
 func myMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			log.Println("hello from middleware")
+			//log.Println("hello from middleware")
 			next(w, r) // Передаем запрос дальше
 		} else {
 			http.Error(w, "Only POST method is allowed", http.StatusBadRequest)
@@ -64,7 +64,7 @@ func metricHandler(w http.ResponseWriter, r *http.Request) {
 	if metricType == "counter" {
 		v, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			log.Print("error in converting metric value to int64")
+			log.Print("error in converting metric value to int64", err, v)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -87,7 +87,7 @@ func getMetricNameAndValue(w http.ResponseWriter, r *http.Request) (string, stri
 			w.WriteHeader(http.StatusNotFound)
 			return "", "none", "", errors.New("no name for metric")
 		}
-		return "", "", "", errors.New("invalid url address")
+		return "", "", "", errors.New("invalid url address "+r.URL.Path)
 	}
 
 	return m[1], m[2], m[3], nil
