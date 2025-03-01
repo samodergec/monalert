@@ -1,3 +1,3 @@
-module github.com/samodergec/monalert
+module monalert
 
 go 1.22.5
