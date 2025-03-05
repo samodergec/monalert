@@ -77,20 +77,26 @@ func metricSender(cm *CollectedMetricPoll) {
 		for i, v := range *cm {
 			if !(*cm)[i].Sent {
 				for m, v := range v.GaugeMetrics {
+
 					response, err := http.Post("http://localhost:8080/update/gauge/"+m+"/"+strconv.FormatFloat(v, 'f', -1, 64), "text/html; charset=utf-8", nil)
 					if err != nil {
-						log.Fatal(err)
+						log.Printf("error in sending request %v", err)
+						continue
 					}
+					defer response.Body.Close()
 					if response.StatusCode != http.StatusOK {
-						log.Fatal(response.StatusCode)
+						log.Printf("server returned error %d", response.StatusCode)
+						continue
 					}
 
 				}
 				for m, v := range v.CounterMetrics {
 					response, err := http.Post("http://localhost:8080/update/counter/"+m+"/"+strconv.FormatInt(v, 10), "text/html; charset=utf-8", nil)
 					if err != nil {
-						log.Fatal(err)
+						log.Printf("error in sending request %v", err)
+						continue
 					}
+					defer response.Body.Close()
 					if response.StatusCode != http.StatusOK {
 						log.Fatal(response.StatusCode)
 					}
