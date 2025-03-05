@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"monalert/internal/handlers/config"
 	"monalert/internal/service"
@@ -17,7 +18,10 @@ func Serve(cfg config.Config, monalert Monalert) error {
 		Addr:    cfg.ServerAddr,
 		Handler: router,
 	}
-	return srv.ListenAndServe()
+	if err := srv.ListenAndServe(); err != nil {
+		return fmt.Errorf("failed to start server on %s: %w", cfg.ServerAddr, err)
+	}
+	return nil
 }
 
 func newRouter(h *handlers) *http.ServeMux {
@@ -45,7 +49,6 @@ func newHandlers(monalert Monalert) *handlers {
 func (h *handlers) myMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			//log.Println("hello from middleware")
 			next(w, r) // Передаем запрос дальше
 		} else {
 			http.Error(w, "Only POST method is allowed", http.StatusBadRequest)
@@ -59,7 +62,6 @@ func (h *handlers) metricHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("content-type", "text/plain")
 	log.Println(metricType, name, value, err)
 	if err != nil {
-
 		if name == "none" {
 			http.Error(w, "no name for metric", http.StatusNotFound)
 			return
@@ -77,9 +79,8 @@ func (h *handlers) metricHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		h.monalert.GaugeUpdate(&service.GaugeUpdateRequest{
 			Metric: name,
-			Value: v,
+			Value:  v,
 		})
-		//ms.gaugeUpdate(name, v)
 	}
 	if metricType == "counter" {
 		v, err := strconv.ParseInt(value, 10, 64)
@@ -90,9 +91,8 @@ func (h *handlers) metricHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		h.monalert.CounterUpdate(&service.CounterUpdateRequest{
 			Metric: name,
-			Value: v,
+			Value:  v,
 		})
-		//ms.counterUpdate(name, v)
 	}
 }
 
@@ -113,6 +113,5 @@ func getMetricNameAndValue(w http.ResponseWriter, r *http.Request) (string, stri
 		}
 		return "", "", "", errors.New("invalid url address " + r.URL.Path)
 	}
-
 	return m[1], m[2], m[3], nil
 }
