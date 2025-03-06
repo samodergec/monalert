@@ -77,18 +77,22 @@ func metricSender(cm *CollectedMetricPoll) {
 		for i, v := range *cm {
 			if !(*cm)[i].Sent {
 				for m, v := range v.GaugeMetrics {
-
 					response, err := http.Post("http://localhost:8080/update/gauge/"+m+"/"+strconv.FormatFloat(v, 'f', -1, 64), "text/html; charset=utf-8", nil)
 					if err != nil {
 						log.Printf("error in sending request %v", err)
 						continue
 					}
-					defer response.Body.Close()
-					if response.StatusCode != http.StatusOK {
-						log.Printf("server returned error %d", response.StatusCode)
-						continue
-					}
-
+					func() {
+						defer func() {
+							if err := response.Body.Close(); err != nil {
+								log.Printf("error closing response body: %v", err)
+							}
+						}()
+						if response.StatusCode != http.StatusOK {
+							log.Printf("Сервер вернул статус: %d", response.StatusCode)
+							return
+						}
+					}()
 				}
 				for m, v := range v.CounterMetrics {
 					response, err := http.Post("http://localhost:8080/update/counter/"+m+"/"+strconv.FormatInt(v, 10), "text/html; charset=utf-8", nil)
@@ -96,11 +100,17 @@ func metricSender(cm *CollectedMetricPoll) {
 						log.Printf("error in sending request %v", err)
 						continue
 					}
-					defer response.Body.Close()
-					if response.StatusCode != http.StatusOK {
-						log.Fatal(response.StatusCode)
-					}
-
+					func() {
+						defer func() {
+							if err := response.Body.Close(); err != nil {
+								log.Printf("error closing response body: %v", err)
+							}
+						}()
+						if response.StatusCode != http.StatusOK {
+							log.Printf("Сервер вернул статус: %d", response.StatusCode)
+							return
+						}
+					}()
 				}
 				(*cm)[i].Sent = true
 			}
