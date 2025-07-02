@@ -13,27 +13,17 @@ import (
 )
 
 type mockMonalert struct {
-	gaugeCalled   bool
-	counterCalled bool
-	lastGauge     *service.GaugeUpdateRequest
-	lastCounter   *service.CounterUpdateRequest
 }
 
-func (m *mockMonalert) GaugeUpdate(req *service.GaugeUpdateRequest) {
-	m.gaugeCalled = true
-	m.lastGauge = req
+func (m *mockMonalert) MetricUpdate(req *service.Metric) error{
+	return nil
 }
 
-func (m *mockMonalert) CounterUpdate(req *service.CounterUpdateRequest) {
-	m.counterCalled = true
-	m.lastCounter = req
-}
-
-func (m *mockMonalert) GetMetricValue(req *service.GetMetricValueRequest) (*service.GetMetricValueResponse, error) {
-	if req.MetricType == "gauge" {
-		return &service.GetMetricValueResponse{MetricValue: "42.5"}, nil
-	} else if req.MetricType == "counter" {
-		return &service.GetMetricValueResponse{MetricValue: "100"}, nil
+func (m *mockMonalert) GetMetric(req *service.Metric) (*service.Metric, error) {
+	if req.Type == "gauge" {
+		return &service.Metric{Float: 42.5}, nil
+	} else if req.Type == "counter" {
+		return &service.Metric{Int: 100}, nil
 	}
 	return nil, fmt.Errorf("service: failed to get metric value")
 }
@@ -89,7 +79,13 @@ func TestRouter(t *testing.T) {
 			name:         "4 Invalid path",
 			method:       http.MethodPost,
 			url:          "/update/foo/bar",
-			expectedCode: http.StatusNotFound,
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "4.1 Invalid method",
+			method:       http.MethodPost,
+			url:          "/update/foo/bar/10",
+			expectedCode: http.StatusBadRequest,
 		},
 		{
 			name:         "5 Invalid gauge metric value (NaN)",
