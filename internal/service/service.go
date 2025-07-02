@@ -1,12 +1,15 @@
 package service
 
 import (
+	"fmt"
+	"log"
 	"monalert/internal/repository"
 )
 
 type Repository interface {
-	GaugeUpdate(req *repository.GaugeUpdateRequest)
-	CounterUpdate(req *repository.CounterUpdateRequest)
+	MetricUpdate(req *repository.Metric) error
+	GetMetric(req *repository.Metric) (*repository.Metric, error)
+	GetAllMetrics() []string
 }
 
 type Monalert struct {
@@ -19,26 +22,49 @@ func NewMonalert(store Repository) *Monalert {
 	}
 }
 
-type GaugeUpdateRequest struct {
-	Metric string
-	Value  float64
+type Metric struct {
+	Name  string
+	Type  string
+	Float float64
+	Int   int64
 }
 
-type CounterUpdateRequest struct {
-	Metric string
-	Value  int64
-}
-
-func (m *Monalert) GaugeUpdate(req *GaugeUpdateRequest) {
-	m.store.GaugeUpdate(&repository.GaugeUpdateRequest{
-		Metric: req.Metric,
-		Value:  req.Value,
+func (m *Monalert) MetricUpdate(req *Metric) error {
+	log.Printf("service: request for metric update: %+v", req)
+	err := m.store.MetricUpdate(&repository.Metric{
+		Name:  req.Name,
+		Type:  req.Type,
+		Float: req.Float,
+		Int:   req.Int,
 	})
+	if err != nil {
+		log.Printf("service: got error from repository:%s", err)
+		return fmt.Errorf("service: failed to update metric value: %w", err)
+	}
+	return nil
 }
 
-func (m *Monalert) CounterUpdate(req *CounterUpdateRequest) {
-	m.store.CounterUpdate(&repository.CounterUpdateRequest{
-		Metric: req.Metric,
-		Value:  req.Value,
+func (m *Monalert) GetMetric(req *Metric) (*Metric, error) {
+	log.Printf("service: request for get metric: %+v", req)
+	resp, err := m.store.GetMetric(&repository.Metric{
+		Type: req.Type,
+		Name: req.Name,
 	})
+	if err != nil {
+		log.Printf("service: got error from repository:%s", err)
+		return nil, fmt.Errorf("service: failed to get metric value: %w", err)
+	}
+	log.Printf("service: got value from repo: %+v", resp)
+	return &Metric{
+		Float: resp.Float,
+		Int:   resp.Int,
+	}, nil
+}
+
+func (m *Monalert) GetAllMetrics() []string {
+	metrics := m.store.GetAllMetrics()
+	if len(metrics) == 0 {
+		return []string{}
+	}
+	return metrics
 }

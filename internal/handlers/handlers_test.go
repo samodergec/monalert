@@ -1,36 +1,134 @@
 package handlers
 
 import (
+	"fmt"
+	"io"
 	"monalert/internal/service"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type mockMonalert struct {
-	gaugeCalled   bool
-	counterCalled bool
-	lastGauge     *service.GaugeUpdateRequest
-	lastCounter   *service.CounterUpdateRequest
 }
 
-func (m *mockMonalert) GaugeUpdate(req *service.GaugeUpdateRequest) {
-	m.gaugeCalled = true
-	m.lastGauge = req
+func (m *mockMonalert) MetricUpdate(req *service.Metric) error{
+	return nil
 }
 
-func (m *mockMonalert) CounterUpdate(req *service.CounterUpdateRequest) {
-	m.counterCalled = true
-	m.lastCounter = req
+func (m *mockMonalert) GetMetric(req *service.Metric) (*service.Metric, error) {
+	if req.Type == "gauge" {
+		return &service.Metric{Float: 42.5}, nil
+	} else if req.Type == "counter" {
+		return &service.Metric{Int: 100}, nil
+	}
+	return nil, fmt.Errorf("service: failed to get metric value")
 }
 
-func Test_defaultHandler(t *testing.T) {
-	/* 	type args struct {
-		w http.ResponseWriter
-		r *http.Request
-	} */
+func (m *mockMonalert) GetAllMetrics() []string {
+	return []string{"gauge:metric1:value", "counter:metric2:value"}
+}
+
+func testRequest(t *testing.T, ts *httptest.Server, method, path string) (*http.Response, string) {
+	req, err := http.NewRequest(method, ts.URL+path, http.NoBody)
+	require.NoError(t, err)
+
+	resp, err := ts.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	return resp, string(respBody)
+}
+
+func TestRouter(t *testing.T) {
+	mock := &mockMonalert{}
+	h := newHandlers(mock)
+	ts := httptest.NewServer(newRouter(h))
+	defer ts.Close()
+	tests := []struct {
+		name         string
+		method       string
+		url          string
+		expectedCode int
+	}{
+		{
+			name:         "1 valid gauge",
+			method:       http.MethodPost,
+			url:          "/update/gauge/temperature/42.5",
+			expectedCode: http.StatusOK,
+		},
+		{
+			name:         "2 valid counter",
+			method:       http.MethodPost,
+			url:          "/update/counter/test/42",
+			expectedCode: http.StatusOK,
+		},
+		{
+			name:         "3 Valid get",
+			method:       http.MethodGet,
+			url:          "/value/gauge/temperature",
+			expectedCode: http.StatusOK,
+		},
+		{
+			name:         "4 Invalid path",
+			method:       http.MethodPost,
+			url:          "/update/foo/bar",
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "4.1 Invalid method",
+			method:       http.MethodPost,
+			url:          "/update/foo/bar/10",
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "5 Invalid gauge metric value (NaN)",
+			method:       http.MethodPost,
+			url:          "/update/gauge/temperature/nan",
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "6 Invalid gauge metric value (string)",
+			method:       http.MethodPost,
+			url:          "/update/gauge/temperature/nat",
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "POST root",
+			method:       http.MethodPost,
+			url:          "/",
+			expectedCode: http.StatusMethodNotAllowed,
+		},
+		{
+			name:         "GET root",
+			method:       http.MethodGet,
+			url:          "/",
+			expectedCode: http.StatusOK,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, _ := testRequest(t, ts, tt.method, tt.url)
+			defer resp.Body.Close()
+			assert.Equal(t, tt.expectedCode, resp.StatusCode)
+			/* r := httptest.NewRequest(tt.method, tt.url, http.NoBody)
+			rw := httptest.NewRecorder()
+			mock := &mockMonalert{}
+			h := newHandlers(mock)
+			h.mainHandle(rw, r)
+			assert.Equal(t, tt.expectedCode, rw.Code) */
+		})
+	}
+}
+
+/*
+func TestHandler_mainHandle(t *testing.T) {
 	tests := []struct {
 		name         string
 		method       string
@@ -38,7 +136,6 @@ func Test_defaultHandler(t *testing.T) {
 		expectedCode int
 		// expectedBody string
 	}{
-		// TODO: Add test cases.
 		{
 			name:         "1 POST Root",
 			method:       http.MethodPost,
@@ -49,20 +146,22 @@ func Test_defaultHandler(t *testing.T) {
 			name:         "2 GET root",
 			method:       http.MethodGet,
 			url:          "/",
-			expectedCode: http.StatusBadRequest,
+			expectedCode: http.StatusOK,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := httptest.NewRequest(tt.method, tt.url, http.NoBody)
-			w := httptest.NewRecorder()
-			defaultHandler(w, r)
-			assert.Equal(t, tt.expectedCode, w.Code)
+			rw := httptest.NewRecorder()
+			mock := &mockMonalert{}
+			h := newHandlers(mock)
+			h.mainHandle(rw, r)
+			assert.Equal(t, tt.expectedCode, rw.Code)
 		})
 	}
 }
 
-func Test_metricHandler(t *testing.T) {
+func Test_metricUpdateHandler(t *testing.T) {
 	tests := []struct {
 		name          string
 		method        string
@@ -110,15 +209,13 @@ func Test_metricHandler(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mock := &mockMonalert{}
 			h := newHandlers(mock)
-
 			r := httptest.NewRequest(tt.method, tt.url, http.NoBody)
-			w := httptest.NewRecorder()
-			handler := h.myMiddleware(h.metricHandler)
-			handler(w, r)
-			resp := w.Result()
+			rw := httptest.NewRecorder()
+			h.metricUpdateHandler(rw, r)
+			resp := rw.Result()
 			assert.Equal(t, tt.expectedCode, resp.StatusCode)
 			assert.Equal(t, tt.expectGauge, mock.gaugeCalled)
 			assert.Equal(t, tt.expectCounter, mock.counterCalled)
 		})
 	}
-}
+} */

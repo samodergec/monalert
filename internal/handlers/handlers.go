@@ -1,14 +1,16 @@
 package handlers
 
 import (
-	"errors"
 	"fmt"
 	"log"
+	"math"
 	"monalert/internal/handlers/config"
 	"monalert/internal/service"
 	"net/http"
-	"regexp"
 	"strconv"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func Serve(cfg config.Config, monalert Monalert) error {
@@ -24,16 +26,15 @@ func Serve(cfg config.Config, monalert Monalert) error {
 	return nil
 }
 
-func newRouter(h *handlers) *http.ServeMux {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", defaultHandler)
-	mux.HandleFunc("/update/", h.myMiddleware(h.metricHandler))
-	return mux
-}
-
-type Monalert interface {
-	GaugeUpdate(req *service.GaugeUpdateRequest)
-	CounterUpdate(req *service.CounterUpdateRequest)
+func newRouter(h *handlers) chi.Router {
+	r := chi.NewRouter()
+	r.Get("/", h.handleMain)
+	r.Route("/update", func(r chi.Router) {
+		r.Post("/{metricType}/{metricName}/{metricValue}", h.handleMetricUpdate)
+		r.Post("/{metricType}/{metricName}", h.handleIncompleteURL)
+	})
+	r.Get("/value/{metricType}/{metricName}", h.handleGetMetric)
+	return r
 }
 
 type handlers struct {
@@ -46,72 +47,89 @@ func newHandlers(monalert Monalert) *handlers {
 	}
 }
 
-func (h *handlers) myMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			next(w, r) // Передаем запрос дальше
-		} else {
-			http.Error(w, "Only POST method is allowed", http.StatusBadRequest)
-			return // Добавляем return, чтобы не выполнялся next()
+type Monalert interface {
+	MetricUpdate(req *service.Metric) error
+	GetMetric(req *service.Metric) (*service.Metric, error)
+	GetAllMetrics() []string
+}
+
+func (h *handlers) handleMetricUpdate(rw http.ResponseWriter, r *http.Request) {
+	//rw.Header().Set("content-type", "text/plain")
+	log.Printf("incoming: %s %s", r.Method, r.URL.Path)
+	log.Println("handleUpdate called")
+	metricType := chi.URLParam(r, "metricType")
+	metricName := chi.URLParam(r, "metricName")
+	metricValue := chi.URLParam(r, "metricValue")
+	switch metricType {
+	case "gauge":
+		val, err := strconv.ParseFloat(metricValue, 64)
+		if err != nil || math.IsNaN(val) || math.IsInf(val, 0) {
+			log.Print("error in converting metric value to float64")
+			rw.WriteHeader(http.StatusBadRequest)
+			return
 		}
+		er := h.monalert.MetricUpdate(&service.Metric{
+			Type:  metricType,
+			Name:  metricName,
+			Float: val,
+		})
+		if er != nil {
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		rw.WriteHeader(http.StatusOK)
+	case "counter":
+		val, err := strconv.ParseInt(metricValue, 10, 64)
+		if err != nil {
+			log.Print("error in converting metric value to int64", err, val)
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		er := h.monalert.MetricUpdate(&service.Metric{
+			Type: metricType,
+			Name: metricName,
+			Int:  val,
+		})
+		if er != nil {
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		rw.WriteHeader(http.StatusOK)
+	default:
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte("unsupported metric type"))
 	}
 }
 
-func (h *handlers) metricHandler(w http.ResponseWriter, r *http.Request) {
-	metricType, name, value, err := getMetricNameAndValue(w, r)
-	w.Header().Set("content-type", "text/plain")
-	log.Println(metricType, name, value, err)
+func (h *handlers) handleGetMetric(rw http.ResponseWriter, r *http.Request) {
+	metricType := chi.URLParam(r, "metricType")
+	metricName := chi.URLParam(r, "metricName")
+	//log.Printf("handler: received request for metric: %s", metricName)
+	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	val, err := h.monalert.GetMetric(&service.Metric{
+		Type: metricType,
+		Name: metricName,
+	})
 	if err != nil {
-		if name == "none" {
-			http.Error(w, "no name for metric", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "Incorrect metric type", http.StatusBadRequest)
+		log.Printf("handler: error from service: %v", err)
+		rw.WriteHeader(http.StatusNotFound)
 		return
 	}
+	switch metricType {
+	case "gauge":
+		rw.Write([]byte(strconv.FormatFloat(val.Float, 'f', -1, 64)))
+	case "counter":
+		rw.Write([]byte(strconv.FormatInt(val.Int, 10)))
+	}
 
-	if metricType == "gauge" {
-		v, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			log.Print("error in converting metric value to float64")
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		h.monalert.GaugeUpdate(&service.GaugeUpdateRequest{
-			Metric: name,
-			Value:  v,
-		})
-	}
-	if metricType == "counter" {
-		v, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			log.Print("error in converting metric value to int64", err, v)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		h.monalert.CounterUpdate(&service.CounterUpdateRequest{
-			Metric: name,
-			Value:  v,
-		})
-	}
 }
 
-func defaultHandler(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusBadRequest)
+func (h *handlers) handleMain(rw http.ResponseWriter, r *http.Request) {
+	rw.Header().Set("content-type", "text/html")
+	rw.Write([]byte(strings.Join(h.monalert.GetAllMetrics(), ", ")))
 }
 
-var validPath = regexp.MustCompile(`^/update/(gauge|counter)/([^/]+)/(\d+(\.\d*)?$)`)
-
-func getMetricNameAndValue(w http.ResponseWriter, r *http.Request) (string, string, string, error) {
-	m := validPath.FindStringSubmatch(r.URL.Path)
-	log.Println(m)
-	if m == nil {
-		matched, _ := regexp.MatchString(`(gauge|counter)/$`, r.URL.Path)
-		if matched {
-			w.WriteHeader(http.StatusNotFound)
-			return "", "none", "", errors.New("no name for metric")
-		}
-		return "", "", "", errors.New("invalid url address " + r.URL.Path)
-	}
-	return m[1], m[2], m[3], nil
+func (h *handlers) handleIncompleteURL(rw http.ResponseWriter, r *http.Request) {
+	rw.WriteHeader(http.StatusBadRequest)
+	rw.Write([]byte("unsupported URL"))
 }
