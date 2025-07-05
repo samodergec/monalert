@@ -84,7 +84,7 @@ func CollectMetrics() *MetricPoll {
 	poll.GaugeMetrics["TotalAlloc"] = float64(rtm.TotalAlloc)
 	poll.GaugeMetrics["RandomValue"] = rand.Float64()
 	poll.CounterMetrics["PollCount"] = int64(pollID)
-	poll.PollNumber=pollID
+	poll.PollNumber = pollID
 	atomic.AddInt64(&pollID, 1)
 	return poll
 }
@@ -118,15 +118,17 @@ func Send(cm []*MetricPoll) error {
 	for _, v := range cm {
 		for m, v := range v.GaugeMetrics {
 			response, err := http.Post("http://"+flagServerAddr+"/update/gauge/"+m+"/"+strconv.FormatFloat(v, 'f', -1, 64), "text/html; charset=utf-8", nil)
+			
 			if err != nil {
 				log.Printf("error in sending request %v", err)
 				return err
 			}
 
 			if response.StatusCode != http.StatusOK {
-				log.Printf("Сервер вернул статус: %d", response.StatusCode)
-				return fmt.Errorf("Сервер вернул статус: %d", response.StatusCode)
+				log.Printf("server returned status: %d", response.StatusCode)
+				return fmt.Errorf("server returned status: %d", response.StatusCode)
 			}
+			defer response.Body.Close()
 
 		}
 		for m, v := range v.CounterMetrics {
@@ -137,15 +139,15 @@ func Send(cm []*MetricPoll) error {
 			}
 
 			if response.StatusCode != http.StatusOK {
-				log.Printf("Сервер вернул статус: %d", response.StatusCode)
-				return fmt.Errorf("Сервер вернул статус: %d", response.StatusCode)
+				log.Printf("server returned status: %d", response.StatusCode)
+				return fmt.Errorf("server returned status: %d", response.StatusCode)
 			}
+			defer response.Body.Close()
 		}
 		log.Printf("New POLL sent %d", v.PollNumber)
 	}
 	return nil
 }
-
 
 func main() {
 	parseFlags()
