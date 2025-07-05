@@ -1,127 +1,158 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
 	"runtime"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
-type gaugeMetrics map[string]float64
-type counterMetrics map[string]int64
-
 type MetricPoll struct {
-	CounterMetrics counterMetrics
-	GaugeMetrics   gaugeMetrics
-	Sent           bool
+	PollNumber     int64
+	CounterMetrics map[string]int64
+	GaugeMetrics   map[string]float64
 }
 
-func NewMetricPoll() MetricPoll {
-	return MetricPoll{
-		CounterMetrics: make(counterMetrics), // Инициализируем пустую мапу
-		GaugeMetrics:   make(gaugeMetrics),   // Инициализируем пустую мапу
-		Sent:           false,                // По умолчанию "не отправлено"
+var pollID int64
+
+type CollectedMetricPolls struct {
+	mux   *sync.Mutex
+	Items []*MetricPoll
+}
+
+func NewMetricPoll() *MetricPoll {
+	return &MetricPoll{
+		CounterMetrics: make(map[string]int64),
+		GaugeMetrics:   make(map[string]float64),
 	}
 }
 
-type CollectedMetricPoll []MetricPoll
-
-func NewCollectedMetricPoll() CollectedMetricPoll {
-	return CollectedMetricPoll{} // Инициализируем пустой срез MetricPoll
+func NewCollectedMetricPoll() CollectedMetricPolls {
+	return CollectedMetricPolls{
+		mux: &sync.Mutex{},
+	}
 }
 
-func metricCollector(cm *CollectedMetricPoll) {
-	const pollInterval = 2 * time.Second
+func (cm *CollectedMetricPolls) Add(mp *MetricPoll) {
+	cm.mux.Lock()
+	defer cm.mux.Unlock()
+	cm.Items = append(cm.Items, mp)
+}
+
+func (cm *CollectedMetricPolls) Swap() []*MetricPoll {
+	cm.mux.Lock()
+	defer cm.mux.Unlock()
+	toSend := cm.Items
+	cm.Items = nil
+	return toSend
+}
+
+func CollectMetrics() *MetricPoll {
+	poll := NewMetricPoll()
+	var rtm runtime.MemStats
+	runtime.ReadMemStats(&rtm)
+	poll.GaugeMetrics["Alloc"] = float64(rtm.Alloc)
+	poll.GaugeMetrics["BuckHashSys"] = float64(rtm.BuckHashSys)
+	poll.GaugeMetrics["Frees"] = float64(rtm.Frees)
+	poll.GaugeMetrics["GCCPUFraction"] = rtm.GCCPUFraction
+	poll.GaugeMetrics["GCSys"] = float64(rtm.GCSys)
+	poll.GaugeMetrics["HeapAlloc"] = float64(rtm.HeapAlloc)
+	poll.GaugeMetrics["HeapIdle"] = float64(rtm.HeapIdle)
+	poll.GaugeMetrics["HeapInuse"] = float64(rtm.HeapInuse)
+	poll.GaugeMetrics["HeapObjects"] = float64(rtm.HeapObjects)
+	poll.GaugeMetrics["HeapReleased"] = float64(rtm.HeapReleased)
+	poll.GaugeMetrics["HeapSys"] = float64(rtm.HeapSys)
+	poll.GaugeMetrics["Lookups"] = float64(rtm.Lookups)
+	poll.GaugeMetrics["MCacheInuse"] = float64(rtm.MCacheInuse)
+	poll.GaugeMetrics["MCacheSys"] = float64(rtm.MCacheSys)
+	poll.GaugeMetrics["MSpanInuse"] = float64(rtm.MSpanInuse)
+	poll.GaugeMetrics["MSpanSys"] = float64(rtm.MSpanSys)
+	poll.GaugeMetrics["Mallocs"] = float64(rtm.Mallocs)
+	poll.GaugeMetrics["NextGC"] = float64(rtm.NextGC)
+	poll.GaugeMetrics["NumForcedGC"] = float64(rtm.NumForcedGC)
+	poll.GaugeMetrics["NumGC"] = float64(rtm.NumGC)
+	poll.GaugeMetrics["OtherSys"] = float64(rtm.OtherSys)
+	poll.GaugeMetrics["PauseTotalNs"] = float64(rtm.PauseTotalNs)
+	poll.GaugeMetrics["StackInuse"] = float64(rtm.StackInuse)
+	poll.GaugeMetrics["StackSys"] = float64(rtm.StackSys)
+	poll.GaugeMetrics["Sys"] = float64(rtm.Sys)
+	poll.GaugeMetrics["TotalAlloc"] = float64(rtm.TotalAlloc)
+	poll.GaugeMetrics["RandomValue"] = rand.Float64()
+	poll.CounterMetrics["PollCount"] = int64(pollID)
+	poll.PollNumber = pollID
+	atomic.AddInt64(&pollID, 1)
+	return poll
+}
+
+func (cm *CollectedMetricPolls) Collector() {
+	pollInterval := time.Duration(flagPollInterval) * time.Second
 	c := time.Tick(pollInterval)
-	PollCount := 0
 	for range c {
-		var rtm runtime.MemStats
-		runtime.ReadMemStats(&rtm)
-		(*cm) = append((*cm), NewMetricPoll())
-		(*cm)[PollCount].GaugeMetrics["Alloc"] = float64(rtm.Alloc)
-		(*cm)[PollCount].GaugeMetrics["BuckHashSys"] = float64(rtm.BuckHashSys)
-		(*cm)[PollCount].GaugeMetrics["Frees"] = float64(rtm.Frees)
-		(*cm)[PollCount].GaugeMetrics["GCCPUFraction"] = rtm.GCCPUFraction
-		(*cm)[PollCount].GaugeMetrics["GCSys"] = float64(rtm.GCSys)
-		(*cm)[PollCount].GaugeMetrics["HeapAlloc"] = float64(rtm.HeapAlloc)
-		(*cm)[PollCount].GaugeMetrics["HeapIdle"] = float64(rtm.HeapIdle)
-		(*cm)[PollCount].GaugeMetrics["HeapInuse"] = float64(rtm.HeapInuse)
-		(*cm)[PollCount].GaugeMetrics["HeapObjects"] = float64(rtm.HeapObjects)
-		(*cm)[PollCount].GaugeMetrics["HeapReleased"] = float64(rtm.HeapReleased)
-		(*cm)[PollCount].GaugeMetrics["HeapSys"] = float64(rtm.HeapSys)
-		(*cm)[PollCount].GaugeMetrics["Lookups"] = float64(rtm.Lookups)
-		(*cm)[PollCount].GaugeMetrics["MCacheInuse"] = float64(rtm.MCacheInuse)
-		(*cm)[PollCount].GaugeMetrics["MCacheSys"] = float64(rtm.MCacheSys)
-		(*cm)[PollCount].GaugeMetrics["MSpanInuse"] = float64(rtm.MSpanInuse)
-		(*cm)[PollCount].GaugeMetrics["MSpanSys"] = float64(rtm.MSpanSys)
-		(*cm)[PollCount].GaugeMetrics["Mallocs"] = float64(rtm.Mallocs)
-		(*cm)[PollCount].GaugeMetrics["NextGC"] = float64(rtm.NextGC)
-		(*cm)[PollCount].GaugeMetrics["NumForcedGC"] = float64(rtm.NumForcedGC)
-		(*cm)[PollCount].GaugeMetrics["NumGC"] = float64(rtm.NumGC)
-		(*cm)[PollCount].GaugeMetrics["OtherSys"] = float64(rtm.OtherSys)
-		(*cm)[PollCount].GaugeMetrics["PauseTotalNs"] = float64(rtm.PauseTotalNs)
-		(*cm)[PollCount].GaugeMetrics["StackInuse"] = float64(rtm.StackInuse)
-		(*cm)[PollCount].GaugeMetrics["StackSys"] = float64(rtm.StackSys)
-		(*cm)[PollCount].GaugeMetrics["Sys"] = float64(rtm.Sys)
-		(*cm)[PollCount].GaugeMetrics["TotalAlloc"] = float64(rtm.TotalAlloc)
-		(*cm)[PollCount].GaugeMetrics["RandomValue"] = rand.Float64()
-		(*cm)[PollCount].CounterMetrics["PollCount"] = int64(PollCount)
-		PollCount++
+		mp := CollectMetrics()
+		cm.Add(mp)
 	}
 }
 
-func metricSender(cm *CollectedMetricPoll) {
-	for {
-		for i, v := range *cm {
-			if !(*cm)[i].Sent {
-				for m, v := range v.GaugeMetrics {
-					response, err := http.Post("http://localhost:8080/update/gauge/"+m+"/"+strconv.FormatFloat(v, 'f', -1, 64), "text/html; charset=utf-8", nil)
-					if err != nil {
-						log.Printf("error in sending request %v", err)
-						continue
-					}
-					func() {
-						defer func() {
-							if err := response.Body.Close(); err != nil {
-								log.Printf("error closing response body: %v", err)
-							}
-						}()
-						if response.StatusCode != http.StatusOK {
-							log.Printf("Сервер вернул статус: %d", response.StatusCode)
-							return
-						}
-					}()
-				}
-				for m, v := range v.CounterMetrics {
-					response, err := http.Post("http://localhost:8080/update/counter/"+m+"/"+strconv.FormatInt(v, 10), "text/html; charset=utf-8", nil)
-					if err != nil {
-						log.Printf("error in sending request %v", err)
-						continue
-					}
-					func() {
-						defer func() {
-							if err := response.Body.Close(); err != nil {
-								log.Printf("error closing response body: %v", err)
-							}
-						}()
-						if response.StatusCode != http.StatusOK {
-							log.Printf("Сервер вернул статус: %d", response.StatusCode)
-							return
-						}
-					}()
-				}
-				(*cm)[i].Sent = true
-			}
+func (cm *CollectedMetricPolls) Sender() {
+	reportInterval := time.Duration(flagReportInterval) * time.Second
+	c := time.Tick(reportInterval)
+	for range c {
+		batch := cm.Swap()
+		if len(batch) == 0 {
+			continue
 		}
-		time.Sleep(10 * time.Second)
+		err := Send(batch)
+		if err != nil {
+			log.Printf("Failed to send metric %v", err)
+		}
 	}
+
+}
+
+func Send(cm []*MetricPoll) error {
+	for _, v := range cm {
+		for m, v := range v.GaugeMetrics {
+			response, err := http.Post("http://"+flagServerAddr+"/update/gauge/"+m+"/"+strconv.FormatFloat(v, 'f', -1, 64), "text/html; charset=utf-8", nil)
+			
+			if err != nil {
+				log.Printf("error in sending request %v", err)
+				return err
+			}
+
+			if response.StatusCode != http.StatusOK {
+				log.Printf("server returned status: %d", response.StatusCode)
+				return fmt.Errorf("server returned status: %d", response.StatusCode)
+			}
+			defer response.Body.Close()
+
+		}
+		for m, v := range v.CounterMetrics {
+			response, err := http.Post("http://"+flagServerAddr+"/update/counter/"+m+"/"+strconv.FormatInt(v, 10), "text/html; charset=utf-8", nil)
+			if err != nil {
+				log.Printf("error in sending request %v", err)
+				return err
+			}
+
+			if response.StatusCode != http.StatusOK {
+				log.Printf("server returned status: %d", response.StatusCode)
+				return fmt.Errorf("server returned status: %d", response.StatusCode)
+			}
+			defer response.Body.Close()
+		}
+		log.Printf("New POLL sent %d", v.PollNumber)
+	}
+	return nil
 }
 
 func main() {
-	cm := NewCollectedMetricPoll()
-	cm = append(cm, NewMetricPoll())
-	go metricCollector(&cm)
-	metricSender(&cm)
+	parseFlags()
+	collection := NewCollectedMetricPoll()
+	go collection.Collector()
+	go collection.Sender()
+	select {}
 }

@@ -55,8 +55,8 @@ type Monalert interface {
 
 func (h *handlers) handleMetricUpdate(rw http.ResponseWriter, r *http.Request) {
 	//rw.Header().Set("content-type", "text/plain")
-	log.Printf("incoming: %s %s", r.Method, r.URL.Path)
-	log.Println("handleUpdate called")
+	log.Printf("handler: incoming request: %s %s", r.Method, r.URL.Path)
+	log.Printf("handler: handleUpdate called")
 	metricType := chi.URLParam(r, "metricType")
 	metricName := chi.URLParam(r, "metricName")
 	metricValue := chi.URLParam(r, "metricValue")
