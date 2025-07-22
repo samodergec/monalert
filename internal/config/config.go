@@ -3,6 +3,7 @@ package config
 import (
 	"flag"
 	handlersConfig "monalert/internal/handlers/config"
+	"os"
 )
 
 type Config struct {
@@ -11,7 +12,10 @@ type Config struct {
 
 func GetConfig() Config {
 	cfg := Config{}
-	flag.StringVar(&cfg.Handlers.ServerAddr, "a", "localhost:8080", "address of http server")
+	flag.StringVar(&cfg.Handlers.ServerAddr, "a", ":8080", "address of http server")
 	flag.Parse()
+	if envRunAddr := os.Getenv("ADDRESS"); envRunAddr != "" {
+		cfg.Handlers.ServerAddr = envRunAddr
+	}
 	return cfg
 }
