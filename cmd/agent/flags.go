@@ -6,8 +6,7 @@ import (
 	"strconv"
 )
 
-type Config struct{
-	
+type Config struct {
 }
 
 var flagServerAddr string
@@ -26,7 +25,7 @@ func parseFlags() {
 	if envReportInterval, _ := strconv.Atoi(os.Getenv("REPORT_INTERVAL")); envReportInterval != 0 {
 		flagReportInterval = envReportInterval
 	}
-	if envPollInterval := os.Getenv("POLL_INTERVAL"); envPollInterval != "" {
-		flagServerAddr = envPollInterval
+	if envPollInterval, _ := strconv.Atoi(os.Getenv("POLL_INTERVAL")); envPollInterval != 0 {
+		flagPollInterval = envPollInterval
 	}
 }

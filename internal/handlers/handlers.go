@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"monalert/internal/handlers/config"
+	handlersConfig "monalert/internal/handlers/config"
 	"monalert/internal/service"
 	"net/http"
 	"strconv"
@@ -13,7 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func Serve(cfg config.Config, monalert Monalert) error {
+func Serve(cfg handlersConfig.Config, monalert Monalert) error {
 	h := newHandlers(monalert)
 	router := newRouter(h)
 	srv := &http.Server{
