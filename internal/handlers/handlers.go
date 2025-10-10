@@ -163,14 +163,13 @@ func (h *handlers) handleMetricUpdate(rw http.ResponseWriter, r *http.Request) {
 func (h *handlers) handleGetMetric(rw http.ResponseWriter, r *http.Request) {
 	metricType := chi.URLParam(r, "metricType")
 	metricName := chi.URLParam(r, "metricName")
-	//log.Printf("handler: received request for metric: %s", metricName)
 	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	val, err := h.monalert.GetMetric(&service.Metric{
 		Type: metricType,
 		Name: metricName,
 	})
 	if err != nil {
-		log.Printf("handler: error from service: %v", err)
+		logger.Log.Debug("handler: error from service", zap.Error(err))
 		rw.WriteHeader(http.StatusNotFound)
 		return
 	}
