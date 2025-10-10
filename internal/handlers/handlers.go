@@ -5,12 +5,15 @@ import (
 	"log"
 	"math"
 	handlersConfig "monalert/internal/handlers/config"
+	"monalert/internal/logger"
 	"monalert/internal/service"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 )
 
 func Serve(cfg handlersConfig.Config, monalert Monalert) error {
@@ -28,6 +31,7 @@ func Serve(cfg handlersConfig.Config, monalert Monalert) error {
 
 func newRouter(h *handlers) chi.Router {
 	r := chi.NewRouter()
+	r.Use(MyLogger())
 	r.Get("/", h.handleMain)
 	r.Route("/update", func(r chi.Router) {
 		r.Post("/{metricType}/{metricName}/{metricValue}", h.handleMetricUpdate)
@@ -35,6 +39,62 @@ func newRouter(h *handlers) chi.Router {
 	})
 	r.Get("/value/{metricType}/{metricName}", h.handleGetMetric)
 	return r
+}
+
+type (
+    // берём структуру для хранения сведений об ответе
+    responseData struct {
+        status int
+        size int
+    }
+
+    // добавляем реализацию http.ResponseWriter
+    loggingResponseWriter struct {
+        http.ResponseWriter // встраиваем оригинальный http.ResponseWriter
+        responseData *responseData
+    }
+)
+
+func (r *loggingResponseWriter) Write(b []byte) (int, error) {
+    // записываем ответ, используя оригинальный http.ResponseWriter
+    size, err := r.ResponseWriter.Write(b) 
+    r.responseData.size += size // захватываем размер
+    return size, err
+}
+
+func (r *loggingResponseWriter) WriteHeader(statusCode int) {
+    // записываем код статуса, используя оригинальный http.ResponseWriter
+    r.ResponseWriter.WriteHeader(statusCode) 
+    r.responseData.status = statusCode // захватываем код статуса
+} 
+
+func MyLogger() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+
+			responseData := &responseData{
+				status: 0,
+				size:   0,
+			}
+			lw := loggingResponseWriter{
+				ResponseWriter: w, // встраиваем оригинальный http.ResponseWriter
+				responseData:   responseData,
+			}
+
+			method := r.Method
+			uri := r.URL.Path
+			next.ServeHTTP(&lw, r)
+			duration := time.Since(start)
+			logger.Log.Info("got incoming HTTP request",
+				zap.String("method", method),
+				zap.String("path", uri),
+				zap.String("duration", duration.String()),
+				zap.String("status", strconv.Itoa(responseData.status)),
+				zap.String("size", strconv.Itoa(responseData.size)),
+			)
+		})
+	}
 }
 
 type handlers struct {
@@ -55,8 +115,7 @@ type Monalert interface {
 
 func (h *handlers) handleMetricUpdate(rw http.ResponseWriter, r *http.Request) {
 	//rw.Header().Set("content-type", "text/plain")
-	log.Printf("handler: incoming request: %s %s", r.Method, r.URL.Path)
-	log.Printf("handler: handleUpdate called")
+	logger.Log.Debug("handler: incoming request in: handleUpdate", zap.String("method", r.Method), zap.String("path", r.URL.Path))
 	metricType := chi.URLParam(r, "metricType")
 	metricName := chi.URLParam(r, "metricName")
 	metricValue := chi.URLParam(r, "metricValue")
