@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	handlersConfig "monalert/internal/handlers/config"
 	"monalert/internal/logger"
 	"monalert/internal/service"
 	"net/http"
@@ -16,15 +15,15 @@ import (
 	"go.uber.org/zap"
 )
 
-func Serve(cfg handlersConfig.Config, monalert Monalert) error {
+func Serve(flagServerAddr string, monalert Monalert) error {
 	h := newHandlers(monalert)
 	router := newRouter(h)
 	srv := &http.Server{
-		Addr:    cfg.ServerAddr,
+		Addr:    flagServerAddr,
 		Handler: router,
 	}
 	if err := srv.ListenAndServe(); err != nil {
-		return fmt.Errorf("failed to start server on %s: %w", cfg.ServerAddr, err)
+		return fmt.Errorf("failed to start server on %s: %w", flagServerAddr, err)
 	}
 	return nil
 }
@@ -42,31 +41,31 @@ func newRouter(h *handlers) chi.Router {
 }
 
 type (
-    // берём структуру для хранения сведений об ответе
-    responseData struct {
-        status int
-        size int
-    }
+	// берём структуру для хранения сведений об ответе
+	responseData struct {
+		status int
+		size   int
+	}
 
-    // добавляем реализацию http.ResponseWriter
-    loggingResponseWriter struct {
-        http.ResponseWriter // встраиваем оригинальный http.ResponseWriter
-        responseData *responseData
-    }
+	// добавляем реализацию http.ResponseWriter
+	loggingResponseWriter struct {
+		http.ResponseWriter // встраиваем оригинальный http.ResponseWriter
+		responseData        *responseData
+	}
 )
 
 func (r *loggingResponseWriter) Write(b []byte) (int, error) {
-    // записываем ответ, используя оригинальный http.ResponseWriter
-    size, err := r.ResponseWriter.Write(b) 
-    r.responseData.size += size // захватываем размер
-    return size, err
+	// записываем ответ, используя оригинальный http.ResponseWriter
+	size, err := r.ResponseWriter.Write(b)
+	r.responseData.size += size // захватываем размер
+	return size, err
 }
 
 func (r *loggingResponseWriter) WriteHeader(statusCode int) {
-    // записываем код статуса, используя оригинальный http.ResponseWriter
-    r.ResponseWriter.WriteHeader(statusCode) 
-    r.responseData.status = statusCode // захватываем код статуса
-} 
+	// записываем код статуса, используя оригинальный http.ResponseWriter
+	r.ResponseWriter.WriteHeader(statusCode)
+	r.responseData.status = statusCode // захватываем код статуса
+}
 
 func MyLogger() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

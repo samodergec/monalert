@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"monalert/internal/config"
 	"monalert/internal/handlers"
 	"monalert/internal/logger"
 	"monalert/internal/repository"
@@ -24,12 +23,10 @@ func main() {
 
 func run() error {
 	logger.Log.Info("Running server", zap.String("log level", flagLogLevel))
-
-	cfg := config.GetConfig()
 	store := repository.NewStore()
 	monalertService := service.NewMonalert(store)
-	if err := handlers.Serve(cfg.Handlers, monalertService); err != nil {
-		return fmt.Errorf("failed to start server with config %s: %w", cfg.Handlers.ServerAddr, err)
+	if err := handlers.Serve(flagServerAddr, monalertService); err != nil {
+		return fmt.Errorf("failed to start server with config %s: %w", flagServerAddr, err)
 	}
 	return nil
 }
