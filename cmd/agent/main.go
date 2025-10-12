@@ -108,7 +108,7 @@ func (cm *CollectedMetricPolls) Sender() {
 		}
 		err := Send(batch)
 		if err != nil {
-			log.Printf("Failed to send metric %v", err)
+			log.Printf("failed to send metric %v", err)
 		}
 	}
 
