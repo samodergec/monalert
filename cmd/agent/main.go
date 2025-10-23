@@ -1,21 +1,26 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
+	"monalert/internal/logger"
+	"monalert/internal/models"
 	"net/http"
 	"runtime"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 type MetricPoll struct {
-	PollNumber     int64
 	CounterMetrics map[string]int64
 	GaugeMetrics   map[string]float64
+	PollNumber     int64
 }
 
 var pollID int64
@@ -83,7 +88,7 @@ func CollectMetrics() *MetricPoll {
 	poll.GaugeMetrics["Sys"] = float64(rtm.Sys)
 	poll.GaugeMetrics["TotalAlloc"] = float64(rtm.TotalAlloc)
 	poll.GaugeMetrics["RandomValue"] = rand.Float64()
-	poll.CounterMetrics["PollCount"] = int64(pollID)
+	poll.CounterMetrics["PollCount"] = pollID
 	poll.PollNumber = pollID
 	atomic.AddInt64(&pollID, 1)
 	return poll
@@ -108,40 +113,62 @@ func (cm *CollectedMetricPolls) Sender() {
 		}
 		err := Send(batch)
 		if err != nil {
-			log.Printf("failed to send metric %v", err)
+			log.Printf("failed to send metric poll %v", err)
 		}
 	}
-
 }
 
 func Send(cm []*MetricPoll) error {
 	for _, v := range cm {
 		for m, v := range v.GaugeMetrics {
-			response, err := http.Post("http://"+flagServerAddr+"/update/gauge/"+m+"/"+strconv.FormatFloat(v, 'f', -1, 64), "text/html; charset=utf-8", nil)
-			
+			var buf bytes.Buffer
+			enc := json.NewEncoder(&buf)
+			if err := enc.Encode(&models.Metrics{
+				ID:    m,
+				MType: "gauge",
+				Value: &v,
+			}); err != nil {
+				logger.Log.Debug("error encoding response", zap.Error(err))
+				return fmt.Errorf("error encoding response %w", err)
+			}
+			fmt.Println("JSON body gauge:", buf.String())
+			response, err := http.Post("http://"+flagServerAddr+"/update", `application/json`, &buf)
+
 			if err != nil {
 				log.Printf("error in sending request %v", err)
-				return err
+				return fmt.Errorf("sending request failed: %w", err)
 			}
 
 			if response.StatusCode != http.StatusOK {
-				log.Printf("server returned status: %d", response.StatusCode)
+				log.Printf("error: server returned status: %d", response.StatusCode)
 				return fmt.Errorf("server returned status: %d", response.StatusCode)
 			}
+			//nolint:gocritic //не такой нагруженный сервис
 			defer response.Body.Close()
-
 		}
 		for m, v := range v.CounterMetrics {
-			response, err := http.Post("http://"+flagServerAddr+"/update/counter/"+m+"/"+strconv.FormatInt(v, 10), "text/html; charset=utf-8", nil)
+			var buf bytes.Buffer
+			enc := json.NewEncoder(&buf)
+			if err := enc.Encode(&models.Metrics{
+				ID:    m,
+				MType: "counter",
+				Delta: &v,
+			}); err != nil {
+				logger.Log.Debug("error encoding response", zap.Error(err))
+				return err
+			}
+			fmt.Println("JSON body counter:", buf.String())
+			response, err := http.Post("http://"+flagServerAddr+"/update", `application/json`, &buf)
 			if err != nil {
 				log.Printf("error in sending request %v", err)
 				return err
 			}
 
 			if response.StatusCode != http.StatusOK {
-				log.Printf("server returned status: %d", response.StatusCode)
+				log.Printf("error: server returned status: %d", response.StatusCode)
 				return fmt.Errorf("server returned status: %d", response.StatusCode)
 			}
+			//nolint:gocritic //не такой нагруженный сервис
 			defer response.Body.Close()
 		}
 		log.Printf("New POLL sent %d", v.PollNumber)

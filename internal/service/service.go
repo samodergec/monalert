@@ -2,13 +2,15 @@ package service
 
 import (
 	"fmt"
-	"log"
-	"monalert/internal/repository"
+	"monalert/internal/logger"
+	"monalert/internal/models"
+
+	"go.uber.org/zap"
 )
 
 type Repository interface {
-	MetricUpdate(req *repository.Metric) error
-	GetMetric(req *repository.Metric) (*repository.Metric, error)
+	MetricUpdate(req *models.Metrics) (*models.Metrics, error)
+	GetMetric(req *models.Metrics) (*models.Metrics, error)
 	GetAllMetrics() []string
 }
 
@@ -22,42 +24,39 @@ func NewMonalert(store Repository) *Monalert {
 	}
 }
 
-type Metric struct {
-	Name  string
-	Type  string
-	Float float64
-	Int   int64
-}
-
-func (m *Monalert) MetricUpdate(req *Metric) error {
-	log.Printf("service: request for metric update: %+v", req)
-	err := m.store.MetricUpdate(&repository.Metric{
-		Name:  req.Name,
-		Type:  req.Type,
-		Float: req.Float,
-		Int:   req.Int,
+func (m *Monalert) MetricUpdate(req *models.Metrics) (*models.Metrics, error) {
+	logger.Log.Debug("service: request for metric update")
+	resp, err := m.store.MetricUpdate(&models.Metrics{
+		ID:    req.ID,
+		MType: req.MType,
+		Value: req.Value,
+		Delta: req.Delta,
 	})
 	if err != nil {
-		log.Printf("service: got error from repository:%s", err)
-		return fmt.Errorf("service: failed to update metric value: %w", err)
+		logger.Log.Debug("service: failed for metric update", zap.Error(err))
+		return nil, fmt.Errorf("service: failed to update metric value: %w", err)
 	}
-	return nil
+	return resp, nil
 }
 
-func (m *Monalert) GetMetric(req *Metric) (*Metric, error) {
-	log.Printf("service: request for get metric: %+v", req)
-	resp, err := m.store.GetMetric(&repository.Metric{
-		Type: req.Type,
-		Name: req.Name,
+func (m *Monalert) GetMetric(req *models.Metrics) (*models.Metrics, error) {
+	logger.Log.Debug("service: request for get metric")
+	resp, err := m.store.GetMetric(&models.Metrics{
+		ID:    req.ID,
+		MType: req.MType,
+		Value: req.Value,
+		Delta: req.Delta,
 	})
 	if err != nil {
-		log.Printf("service: got error from repository:%s", err)
+		logger.Log.Debug("service: failed to get metric value", zap.Error(err))
 		return nil, fmt.Errorf("service: failed to get metric value: %w", err)
 	}
-	log.Printf("service: got value from repo: %+v", resp)
-	return &Metric{
-		Float: resp.Float,
-		Int:   resp.Int,
+	logger.Log.Debug("service: got value from repo", zap.Any("resp:", resp))
+	return &models.Metrics{
+		ID:    resp.ID,
+		MType: resp.MType,
+		Value: resp.Value,
+		Delta: resp.Delta,
 	}, nil
 }
 
