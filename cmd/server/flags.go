@@ -6,7 +6,7 @@ import (
 )
 
 var (
-	flagLogLevel string
+	flagLogLevel   string
 	flagServerAddr string
 )
 

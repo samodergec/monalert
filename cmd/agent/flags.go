@@ -12,11 +12,13 @@ type Config struct {
 var flagServerAddr string
 var flagReportInterval int
 var flagPollInterval int
+var flagUseJSON string
 
 func parseFlags() {
 	flag.StringVar(&flagServerAddr, "a", "localhost:8080", "address and port to run server")
 	flag.IntVar(&flagReportInterval, "r", 2, "interval for metric send")
 	flag.IntVar(&flagPollInterval, "p", 1, "interval for collecting metrics")
+	flag.StringVar(&flagUseJSON, "j", "", "use JSON for metric sender")
 	flag.Parse()
 
 	if envRunAddr := os.Getenv("ADDRESS"); envRunAddr != "" {
@@ -28,4 +30,9 @@ func parseFlags() {
 	if envPollInterval, _ := strconv.Atoi(os.Getenv("POLL_INTERVAL")); envPollInterval != 0 {
 		flagPollInterval = envPollInterval
 	}
+	/*
+		 	if envJSONSend := os.Getenv("JSONSend"); envJSONSend != "" {
+				flagUseJSON = envJSONSend
+			}
+	*/
 }

@@ -27,4 +27,6 @@ vendor/
 #linting
 golangci-lint
 .golangci.yml
+.golangci.bck.yml
 Makefile
+Makefile.bck

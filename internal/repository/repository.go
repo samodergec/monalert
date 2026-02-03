@@ -2,9 +2,12 @@ package repository
 
 import (
 	"fmt"
-	"log"
+	"monalert/internal/logger"
+	"monalert/internal/models"
 	"strconv"
 	"sync"
+
+	"go.uber.org/zap"
 )
 
 type Store struct {
@@ -21,54 +24,62 @@ func NewStore() *Store {
 	}
 }
 
-type Metric struct {
-	Name  string
-	Type  string
-	Float float64
-	Int   int64
-}
-
-func (s *Store) MetricUpdate(req *Metric) error {
+func (s *Store) MetricUpdate(req *models.Metrics) (*models.Metrics, error) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
-	switch req.Type {
+	switch req.MType {
 	case "gauge":
-		s.gaugeStore[req.Name] = req.Float
-		log.Printf("repository: storage saved metric type: %s, name: %s, value:%f", req.Type, req.Name, req.Float)
-		return nil
+		logger.Log.Debug("repository: storage updated metric request1", zap.String("type", req.MType), zap.String("name", req.ID))
+		s.gaugeStore[req.ID] = *req.Value
+		val := s.gaugeStore[req.ID]
+		logger.Log.Debug("repository: storage updated metric", zap.String("type", req.MType), zap.String("name", req.ID), zap.Float64("value:", val))
+		return &models.Metrics{
+			ID:    req.ID,
+			MType: "gauge",
+			Value: &val,
+		}, nil
 	case "counter":
-		s.counterStore[req.Name] += req.Int
-		log.Printf("repository: storage saved metric type: %s, name: %s, value:%d", req.Type, req.Name, req.Int)
-		return nil
+		s.counterStore[req.ID] += *req.Delta
+		val := s.counterStore[req.ID]
+		logger.Log.Debug("repository: storage updated metric", zap.String("type", req.MType), zap.String("name", req.ID), zap.Int64("value:", val))
+		return &models.Metrics{
+			ID:    req.ID,
+			MType: "counter",
+			Delta: &val,
+		}, nil
 	default:
-		return fmt.Errorf("repository: storage doesn't support this type of metrics: %s", req.Type)
+		return nil, fmt.Errorf("repository: storage doesn't support this type of metrics: %s", req.MType)
 	}
 }
 
-func (s *Store) GetMetric(req *Metric) (*Metric, error) {
+func (s *Store) GetMetric(req *models.Metrics) (*models.Metrics, error) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
-	switch req.Type {
+	switch req.MType {
 	case "gauge":
-		if val, ok := s.gaugeStore[req.Name]; ok {
-			log.Printf("repository: storage provided metric type: %s, name: %s, value:%f", req.Type, req.Name, val)
-			return &Metric{
-				Float: val,
+		if val, ok := s.gaugeStore[req.ID]; ok {
+			logger.Log.Debug("repository: storage provided metric", zap.String("type", req.MType), zap.String("name", req.ID), zap.Float64("value:", val))
+			return &models.Metrics{
+				ID:    req.ID,
+				MType: "gauge",
+				Value: &val,
 			}, nil
 		} else {
-			return nil, fmt.Errorf("repository: no metric in storage with provided name: %s", req.Name)
+			return nil, fmt.Errorf("repository: no metric in storage with provided name: %s", req.ID)
 		}
 	case "counter":
-		if val, ok := s.counterStore[req.Name]; ok {
-			log.Printf("repository: storage provided metric type: %s, name: %s, value:%d", req.Type, req.Name, val)
-			return &Metric{
-				Int: val,
+		if val, ok := s.counterStore[req.ID]; ok {
+			logger.Log.Debug("repository: storage provided metric", zap.String("type", req.MType), zap.String("name", req.ID), zap.Int64("value:", val))
+			return &models.Metrics{
+				ID:    req.ID,
+				MType: "counter",
+				Delta: &val,
 			}, nil
 		} else {
-			return nil, fmt.Errorf("repository: no metric in storage with provided type: %s and name: %s", req.Type, req.Name)
+			return nil, fmt.Errorf("repository: no metric in storage with provided type: %s and name: %s", req.MType, req.ID)
 		}
 	default:
-		return nil, fmt.Errorf("repository: storage doesn't support this type of metrics: %s", req.Type)
+		return nil, fmt.Errorf("repository: storage doesn't support this type of metrics: %s", req.MType)
 	}
 }
 
@@ -82,6 +93,6 @@ func (s *Store) GetAllMetrics() []string {
 	for metric := range s.counterStore {
 		metrics = append(metrics, fmt.Sprintf("counter:%s:%d", metric, s.counterStore[metric]))
 	}
-	log.Printf("repository: storage provided all metric type: %v", metrics)
+	logger.Log.Debug("repository: storage provided all metric", zap.Any("metrics:", metrics))
 	return metrics
 }
