@@ -3,13 +3,17 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"monalert/internal/logger"
 	"monalert/internal/models"
 	"net/http"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -73,6 +77,7 @@ func CollectMetrics() *MetricPoll {
 	poll.GaugeMetrics["HeapReleased"] = float64(rtm.HeapReleased)
 	poll.GaugeMetrics["HeapSys"] = float64(rtm.HeapSys)
 	poll.GaugeMetrics["Lookups"] = float64(rtm.Lookups)
+	poll.GaugeMetrics["LastGC"] = float64(rtm.LastGC)
 	poll.GaugeMetrics["MCacheInuse"] = float64(rtm.MCacheInuse)
 	poll.GaugeMetrics["MCacheSys"] = float64(rtm.MCacheSys)
 	poll.GaugeMetrics["MSpanInuse"] = float64(rtm.MSpanInuse)
@@ -118,66 +123,105 @@ func (cm *CollectedMetricPolls) Sender() {
 	}
 }
 
+func SendRequest(address string) error {
+	var lastErr error
+	for range 3 {
+		response, err := http.Post(address, "text/html; charset=utf-8", nil)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				lastErr = err
+				continue
+			}
+			if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "connection refused") {
+				lastErr = err
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			logger.Log.Error("error in sending request", zap.String("request:", address), zap.Error(err))
+			return fmt.Errorf("error in sending request: %w", err)
+		}
+		if response.StatusCode != http.StatusOK {
+			response.Body.Close() //nolint:gosec // response.Body.Close() error is intentionally ignored
+			logger.Log.Error("server returned status", zap.Int("code:", response.StatusCode))
+			return fmt.Errorf("server returned status: %d", response.StatusCode)
+		}
+		response.Body.Close() //nolint:gosec // response.Body.Close() error is intentionally ignored
+		return nil
+	}
+	return fmt.Errorf("request failed after retry: %w", lastErr)
+}
+
+func SendJSONRequest(buf *bytes.Buffer) error {
+	response, err := http.Post("http://"+flagServerAddr+"/update", `application/json`, buf)
+
+	if err != nil {
+		return fmt.Errorf("sending request failed: %w", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned status: %d", response.StatusCode)
+	}
+	defer response.Body.Close()
+	return nil
+}
+
 func Send(cm []*MetricPoll) error {
-	for _, v := range cm {
-		for m, v := range v.GaugeMetrics {
-			var buf bytes.Buffer
-			enc := json.NewEncoder(&buf)
-			if err := enc.Encode(&models.Metrics{
-				ID:    m,
-				MType: "gauge",
-				Value: &v,
-			}); err != nil {
-				logger.Log.Debug("error encoding response", zap.Error(err))
-				return fmt.Errorf("error encoding response %w", err)
+	for _, poll := range cm {
+		if flagUseJSON != "" {
+			logger.Log.Debug("using JSON for sending", zap.String("JSON flag", flagUseJSON))
+			for m, v := range poll.GaugeMetrics {
+				var buf bytes.Buffer
+				enc := json.NewEncoder(&buf)
+				if err := enc.Encode(&models.Metrics{
+					ID:    m,
+					MType: "gauge",
+					Value: &v,
+				}); err != nil {
+					logger.Log.Debug("error encoding response", zap.Error(err))
+					return fmt.Errorf("error encoding response %w", err)
+				}
+				if err := SendJSONRequest(&buf); err != nil {
+					return err
+				}
 			}
-			fmt.Println("JSON body gauge:", buf.String())
-			response, err := http.Post("http://"+flagServerAddr+"/update", `application/json`, &buf)
-
-			if err != nil {
-				log.Printf("error in sending request %v", err)
-				return fmt.Errorf("sending request failed: %w", err)
+			for m, v := range poll.CounterMetrics {
+				var buf bytes.Buffer
+				enc := json.NewEncoder(&buf)
+				if err := enc.Encode(&models.Metrics{
+					ID:    m,
+					MType: "counter",
+					Delta: &v,
+				}); err != nil {
+					logger.Log.Debug("error encoding response", zap.Error(err))
+					return err
+				}
+				if err := SendJSONRequest(&buf); err != nil {
+					return err
+				}
 			}
-
-			if response.StatusCode != http.StatusOK {
-				log.Printf("error: server returned status: %d", response.StatusCode)
-				return fmt.Errorf("server returned status: %d", response.StatusCode)
+		} else {
+			logger.Log.Debug("using URL for sending", zap.String("JSON flag", flagUseJSON))
+			for metricName, value := range poll.GaugeMetrics {
+				address := "http://" + flagServerAddr + "/update/gauge/" + metricName + "/" + strconv.FormatFloat(value, 'f', -1, 64)
+				if err := SendRequest(address); err != nil {
+					return err
+				}
 			}
-			//nolint:gocritic //не такой нагруженный сервис
-			defer response.Body.Close()
+			for metricName, value := range poll.CounterMetrics {
+				address := "http://" + flagServerAddr + "/update/counter/" + metricName + "/" + strconv.FormatInt(value, 10)
+				if err := SendRequest(address); err != nil {
+					return err
+				}
+			}
 		}
-		for m, v := range v.CounterMetrics {
-			var buf bytes.Buffer
-			enc := json.NewEncoder(&buf)
-			if err := enc.Encode(&models.Metrics{
-				ID:    m,
-				MType: "counter",
-				Delta: &v,
-			}); err != nil {
-				logger.Log.Debug("error encoding response", zap.Error(err))
-				return err
-			}
-			fmt.Println("JSON body counter:", buf.String())
-			response, err := http.Post("http://"+flagServerAddr+"/update", `application/json`, &buf)
-			if err != nil {
-				log.Printf("error in sending request %v", err)
-				return err
-			}
-
-			if response.StatusCode != http.StatusOK {
-				log.Printf("error: server returned status: %d", response.StatusCode)
-				return fmt.Errorf("server returned status: %d", response.StatusCode)
-			}
-			//nolint:gocritic //не такой нагруженный сервис
-			defer response.Body.Close()
-		}
-		log.Printf("New POLL sent %d", v.PollNumber)
 	}
 	return nil
 }
 
 func main() {
 	parseFlags()
+	if flagPollInterval == 0 || flagReportInterval == 0 {
+		logger.Log.Panic("incorrect poll or report interval:", zap.Any("poll interval:", flagPollInterval), zap.Any("report interval", flagReportInterval))
+	}
 	collection := NewCollectedMetricPoll()
 	go collection.Collector()
 	go collection.Sender()

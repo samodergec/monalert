@@ -3,6 +3,8 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"math"
 	"monalert/internal/logger"
 	"monalert/internal/models"
 	"monalert/internal/service"
@@ -32,8 +34,13 @@ func newRouter(h *handlers) chi.Router {
 	r := chi.NewRouter()
 	r.Use(MyLogger())
 	r.Get("/", h.handleMain)
-	r.Post("/update", h.handleMetricUpdate)
-	r.Post("/value", h.handleGetMetric)
+	r.Route("/update", func(r chi.Router) {
+		r.Post("/", h.handleMetricUpdate)
+		r.Post("/{metricType}/{metricName}/{metricValue}", h.handleMetricUpdate)
+		r.Post("/{metricType}/{metricName}", h.handleIncompleteURL)
+	})
+	r.Get("/value/{metricType}/{metricName}", h.handleGetMetric)
+	r.Post("/value/", h.handleGetMetricJSON)
 	return r
 }
 
@@ -80,6 +87,7 @@ func MyLogger() func(http.Handler) http.Handler {
 
 			method := r.Method
 			uri := r.URL.Path
+			host := r.Host
 			next.ServeHTTP(&lw, r)
 
 			status := responseData.status
@@ -90,6 +98,7 @@ func MyLogger() func(http.Handler) http.Handler {
 			duration := time.Since(start)
 			logger.Log.Info("got incoming HTTP request",
 				zap.String("method", method),
+				zap.String("host", host),
 				zap.String("path", uri),
 				zap.String("duration", duration.String()),
 				zap.String("status", strconv.Itoa(status)),
@@ -117,6 +126,61 @@ func newHandlers(monalert Service) *handlers {
 
 func (h *handlers) handleMetricUpdate(w http.ResponseWriter, r *http.Request) {
 	logger.Log.Debug("handleMetricUpdate: incoming request", zap.String("method", r.Method), zap.String("path", r.URL.Path))
+
+	metricType := chi.URLParam(r, "metricType")
+	metricName := chi.URLParam(r, "metricName")
+	metricValue := chi.URLParam(r, "metricValue")
+
+	if metricType != "" && metricName != "" && metricValue != "" {
+		switch metricType {
+		case "gauge":
+			val, err := strconv.ParseFloat(metricValue, 64)
+			if err != nil || math.IsNaN(val) || math.IsInf(val, 0) {
+				log.Print("error in converting metric value to float64")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			_, err = h.monalert.MetricUpdate(&models.Metrics{
+				MType: metricType,
+				ID:    metricName,
+				Value: &val,
+			})
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		case "counter":
+			val, err := strconv.ParseInt(metricValue, 10, 64)
+			if err != nil {
+				log.Print("error in converting metric value to int64", err, val)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			_, err = h.monalert.MetricUpdate(&models.Metrics{
+				MType: metricType,
+				ID:    metricName,
+				Delta: &val,
+			})
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		default:
+			http.Error(w, "unsupported metric type", http.StatusBadRequest)
+			return
+		}
+	}
+
+	contentType := r.Header.Get("Content-Type")
+	if contentType != "application/json" {
+		http.Error(w, "Unsupported content type", http.StatusUnsupportedMediaType)
+		return
+	}
+
 	var req models.Metrics
 
 	logger.Log.Debug("decoding request")
@@ -157,7 +221,7 @@ func (h *handlers) handleMetricUpdate(w http.ResponseWriter, r *http.Request) {
 	logger.Log.Debug("sending HTTP 200 response")
 }
 
-func (h *handlers) handleGetMetric(w http.ResponseWriter, r *http.Request) {
+func (h *handlers) handleGetMetricJSON(w http.ResponseWriter, r *http.Request) {
 	logger.Log.Debug("handleGetMetric: incoming request", zap.String("method", r.Method), zap.String("path", r.URL.Path))
 	var req models.Metrics
 	logger.Log.Debug("decoding request")
@@ -187,17 +251,39 @@ func (h *handlers) handleGetMetric(w http.ResponseWriter, r *http.Request) {
 	logger.Log.Debug("sending HTTP 200 response")
 }
 
+func (h *handlers) handleGetMetric(rw http.ResponseWriter, r *http.Request) {
+	metricType := chi.URLParam(r, "metricType")
+	metricName := chi.URLParam(r, "metricName")
+	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	val, err := h.monalert.GetMetric(&models.Metrics{
+		MType: metricType,
+		ID:    metricName,
+	})
+	if err != nil {
+		logger.Log.Debug("handler: error from service", zap.Error(err))
+		rw.WriteHeader(http.StatusNotFound)
+		return
+	}
+	switch metricType {
+	case "gauge":
+		// TODO add check for *val.Value nil
+		//nolint:gosec // write error is not actionable in HTTP handler
+		rw.Write([]byte(strconv.FormatFloat(*val.Value, 'f', -1, 64)))
+	case "counter":
+		// TODO add check for *val.Value nil
+		//nolint:gosec // write error is not actionable in HTTP handler
+		rw.Write([]byte(strconv.FormatInt(*val.Delta, 10)))
+	}
+}
+
 func (h *handlers) handleMain(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("content-type", "text/html")
 	_, err := w.Write([]byte(strings.Join(h.monalert.GetAllMetrics(), ", ")))
 	if err != nil {
-		logger.Log.Debug("handleMain: write error", zap.Error(err))
+		logger.Log.Error("handleMain: write error", zap.Error(err))
 	}
 }
 
-/*
-	func (h *handlers) handleIncompleteURL(rw http.ResponseWriter, r *http.Request) {
-	rw.WriteHeader(http.StatusBadRequest)
-	rw.Write([]byte("unsupported URL"))
-	}
-*/
+func (h *handlers) handleIncompleteURL(rw http.ResponseWriter, r *http.Request) {
+	http.Error(rw, "unsupported URL", http.StatusBadRequest)
+}
