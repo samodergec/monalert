@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"monalert/internal/compress"
 	"monalert/internal/logger"
 	"monalert/internal/models"
 	"monalert/internal/service"
@@ -33,6 +34,7 @@ func Serve(flagServerAddr string, monalert *service.Monalert) error {
 func newRouter(h *handlers) chi.Router {
 	r := chi.NewRouter()
 	r.Use(MyLogger())
+	r.Use(gzipMiddleware())
 	r.Get("/", h.handleMain)
 	r.Route("/update", func(r chi.Router) {
 		r.Post("/", h.handleMetricUpdate)
@@ -121,6 +123,48 @@ type handlers struct {
 func newHandlers(monalert Service) *handlers {
 	return &handlers{
 		monalert: monalert,
+	}
+}
+
+func gzipMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// по умолчанию устанавливаем оригинальный http.ResponseWriter как тот,
+			// который будем передавать следующей функции
+			ow := w
+
+			// проверяем, что клиент умеет получать от сервера сжатые данные в формате gzip
+			acceptEncoding := r.Header.Get("Accept-Encoding")
+			supportsGzip := strings.Contains(acceptEncoding, "gzip")
+			if supportsGzip {
+				// оборачиваем оригинальный http.ResponseWriter новым с поддержкой сжатия
+				cw := compress.NewCompressWriter(w)
+				// меняем оригинальный http.ResponseWriter на новый
+				ow = cw
+				// не забываем отправить клиенту все сжатые данные после завершения middleware
+				ow.Header().Set("Content-Encoding", "gzip")
+				ow.Header().Del("Content-Length")
+				defer cw.Close()
+			}
+
+			// проверяем, что клиент отправил серверу сжатые данные в формате gzip
+			contentEncoding := r.Header.Get("Content-Encoding")
+			sendsGzip := strings.Contains(contentEncoding, "gzip")
+			if sendsGzip {
+				// оборачиваем тело запроса в io.Reader с поддержкой декомпрессии
+				cr, err := compress.NewCompressReader(r.Body)
+				if err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				// меняем тело запроса на новое
+				r.Body = cr
+				defer cr.Close()
+			}
+
+			// передаём управление хендлеру
+			next.ServeHTTP(ow, r)
+		})
 	}
 }
 
@@ -214,8 +258,9 @@ func (h *handlers) handleMetricUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// сериализуем ответ сервера
 	enc := json.NewEncoder(w)
+	logger.Log.Debug("headers before encode", zap.Any("headers", w.Header()))
 	if err := enc.Encode(resp); err != nil {
-		logger.Log.Debug("error encoding response", zap.Error(err))
+		logger.Log.Error("error encoding response", zap.Error(err))
 		return
 	}
 	logger.Log.Debug("sending HTTP 200 response")
@@ -227,7 +272,7 @@ func (h *handlers) handleGetMetricJSON(w http.ResponseWriter, r *http.Request) {
 	logger.Log.Debug("decoding request")
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&req); err != nil {
-		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
+		logger.Log.Error("cannot decode request JSON body", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -236,7 +281,7 @@ func (h *handlers) handleGetMetricJSON(w http.ResponseWriter, r *http.Request) {
 		ID:    req.ID,
 	})
 	if err != nil {
-		logger.Log.Debug("handler: error from service", zap.Error(err))
+		logger.Log.Error("handler: error from service", zap.Error(err))
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -245,7 +290,7 @@ func (h *handlers) handleGetMetricJSON(w http.ResponseWriter, r *http.Request) {
 	// сериализуем ответ сервера
 	enc := json.NewEncoder(w)
 	if err := enc.Encode(resp); err != nil {
-		logger.Log.Debug("error encoding response", zap.Error(err))
+		logger.Log.Error("error encoding response", zap.Error(err))
 		return
 	}
 	logger.Log.Debug("sending HTTP 200 response")
