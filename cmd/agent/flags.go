@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"log"
 	"os"
 	"strconv"
 )
@@ -28,10 +29,18 @@ func parseFlags() {
 	if envRunAddr := os.Getenv("ADDRESS"); envRunAddr != "" {
 		flagServerAddr = envRunAddr
 	}
-	if envReportInterval, _ := strconv.Atoi(os.Getenv("REPORT_INTERVAL")); envReportInterval != 0 {
+	if v := os.Getenv("REPORT_INTERVAL"); v != "" {
+		envReportInterval, err := strconv.Atoi(v)
+		if err != nil {
+			log.Fatalf("invalid REPORT_INTERVAL=%q: %v", v, err)
+		}
 		flagReportInterval = envReportInterval
 	}
-	if envPollInterval, _ := strconv.Atoi(os.Getenv("POLL_INTERVAL")); envPollInterval != 0 {
-		flagPollInterval = envPollInterval
+	if v := os.Getenv("POLL_INTERVAL"); v != "" {
+		envReportInterval, err := strconv.Atoi(v)
+		if err != nil {
+			log.Fatalf("invalid POLL_INTERVAL=%q: %v", v, err)
+		}
+		flagReportInterval = envReportInterval
 	}
 }

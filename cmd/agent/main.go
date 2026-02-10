@@ -244,10 +244,6 @@ func main() {
 	if err := logger.Initialize(flagLogLevel); err != nil {
 		log.Fatal(err)
 	}
-	if flagPollInterval == 0 || flagReportInterval == 0 {
-		logger.Log.Panic("incorrect poll or report interval:", zap.Any("poll interval:", flagPollInterval), zap.Any("report interval", flagReportInterval))
-	}
-
 	collection := NewCollectedMetricPoll()
 	go collection.Collector()
 	go collection.Sender()
