@@ -113,7 +113,7 @@ func MyLogger() func(http.Handler) http.Handler {
 type Service interface {
 	MetricUpdate(req *models.Metrics) (*models.Metrics, error)
 	GetMetric(req *models.Metrics) (*models.Metrics, error)
-	GetAllMetrics() []string // TODO на это перевести ([]models.Metrics, error)
+	GetAllMetrics() []models.Metrics
 }
 
 type handlers struct {
@@ -323,7 +323,12 @@ func (h *handlers) handleGetMetric(rw http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) handleMain(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("content-type", "text/html")
-	_, err := w.Write([]byte(strings.Join(h.monalert.GetAllMetrics(), ", ")))
+	data, err := json.MarshalIndent(h.monalert.GetAllMetrics(), "", " ")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	_, err = w.Write(data)
 	if err != nil {
 		logger.Log.Error("handleMain: write error", zap.Error(err))
 	}

@@ -32,8 +32,21 @@ func (m *mockMonalert) GetMetric(req *models.Metrics) (*models.Metrics, error) {
 	}
 }
 
-func (m *mockMonalert) GetAllMetrics() []string {
-	return []string{"gauge:metric1:value", "counter:metric2:value"}
+func (m *mockMonalert) GetAllMetrics() []models.Metrics {
+	value := 1.2
+	var delta int64 = 1
+	return []models.Metrics{
+		{
+			ID:    "metric1",
+			MType: "gauge",
+			Value: &value,
+		},
+		{
+			ID:    "metric2",
+			MType: "counter",
+			Delta: &delta,
+		},
+	}
 }
 
 func testRequest(t *testing.T, ts *httptest.Server, method, path string) (*http.Response, string) {

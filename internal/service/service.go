@@ -11,7 +11,7 @@ import (
 type Repository interface {
 	MetricUpdate(req *models.Metrics) (*models.Metrics, error)
 	GetMetric(req *models.Metrics) (*models.Metrics, error)
-	GetAllMetrics() []string
+	GetAllMetrics() []models.Metrics
 }
 
 type Monalert struct {
@@ -60,10 +60,7 @@ func (m *Monalert) GetMetric(req *models.Metrics) (*models.Metrics, error) {
 	}, nil
 }
 
-func (m *Monalert) GetAllMetrics() []string {
+func (m *Monalert) GetAllMetrics() []models.Metrics {
 	metrics := m.store.GetAllMetrics()
-	if len(metrics) == 0 {
-		return []string{}
-	}
 	return metrics
 }
