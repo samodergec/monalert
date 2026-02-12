@@ -1,8 +1,10 @@
 package repository
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"monalert/internal/logger"
 	"monalert/internal/models"
 	"os"
@@ -128,29 +130,29 @@ func (s *Store) Persist() error {
 }
 
 func (s *Store) Restore() error {
-	/* 	file, err := os.OpenFile(s.filePath, os.O_RDONLY, 0o600)
-	   	if err != nil {
-	   		return fmt.Errorf("cannot open file for restore: %w, file path: %s", err, s.filePath)
-	   	}
-	   	defer file.Close()
-	   	data := make([]byte, 64)
-	   	_, err = file.Read(data)
-	   	if err != nil {
-	   		return err
-	   	} */
-
-	data, err := os.ReadFile(s.filePath)
+	file, err := os.OpenFile(s.filePath, os.O_RDONLY|os.O_CREATE, 0o600)
 	if err != nil {
-		return err
+		return fmt.Errorf("cannot open file for restore: %w, file path: %s", err, s.filePath)
 	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return fmt.Errorf("cannot read restore file %w", err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		// файл пустой — просто нечего восстанавливать
+		logger.Log.Warn("restore file was empty")
+		return nil
+	}
+
 	var allMetrics []models.Metrics
 	if err := json.Unmarshal(data, &allMetrics); err != nil {
-		return err
+		return fmt.Errorf("cannot unmarshal data in restore file %w", err)
 	}
 	for _, metric := range allMetrics {
 		_, err = s.MetricUpdate(&metric)
 		if err != nil {
-			return err
+			return fmt.Errorf("cannot add metric from restore file %w", err)
 		}
 	}
 	fmt.Println("data restored from file")
