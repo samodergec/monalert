@@ -12,15 +12,15 @@ import (
 )
 
 type Store struct {
-	mux          *sync.Mutex
+	mux          *sync.RWMutex
 	gaugeStore   map[string]float64
 	counterStore map[string]int64
 	filePath     string
 }
 
-func NewStore(filepath string) *Store {
+func NewStore(filepath string, syncOnUpdate bool) *Store {
 	return &Store{
-		mux:          &sync.Mutex{},
+		mux:          &sync.RWMutex{},
 		gaugeStore:   make(map[string]float64),
 		counterStore: make(map[string]int64),
 		filePath:     filepath,
@@ -56,8 +56,8 @@ func (s *Store) MetricUpdate(req *models.Metrics) (*models.Metrics, error) {
 }
 
 func (s *Store) GetMetric(req *models.Metrics) (*models.Metrics, error) {
-	s.mux.Lock()
-	defer s.mux.Unlock()
+	s.mux.RLock()
+	defer s.mux.RUnlock()
 	switch req.MType {
 	case "gauge":
 		if val, ok := s.gaugeStore[req.ID]; ok {
@@ -87,8 +87,8 @@ func (s *Store) GetMetric(req *models.Metrics) (*models.Metrics, error) {
 }
 
 func (s *Store) GetAllMetrics() []models.Metrics {
-	s.mux.Lock()
-	defer s.mux.Unlock()
+	s.mux.RLock()
+	defer s.mux.RUnlock()
 	allMetrics := make([]models.Metrics, 0, len(s.gaugeStore)+len(s.counterStore))
 	for name, value := range s.gaugeStore {
 		allMetrics = append(allMetrics, models.Metrics{
@@ -128,19 +128,30 @@ func (s *Store) Persist() error {
 }
 
 func (s *Store) Restore() error {
-	file, err := os.OpenFile(s.filePath, os.O_RDONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	data := make([]byte, 64)
-	_, err = file.Read(data)
+	/* 	file, err := os.OpenFile(s.filePath, os.O_RDONLY, 0o600)
+	   	if err != nil {
+	   		return fmt.Errorf("cannot open file for restore: %w, file path: %s", err, s.filePath)
+	   	}
+	   	defer file.Close()
+	   	data := make([]byte, 64)
+	   	_, err = file.Read(data)
+	   	if err != nil {
+	   		return err
+	   	} */
+
+	data, err := os.ReadFile(s.filePath)
 	if err != nil {
 		return err
 	}
 	var allMetrics []models.Metrics
 	if err := json.Unmarshal(data, &allMetrics); err != nil {
 		return err
+	}
+	for _, metric := range allMetrics {
+		_, err = s.MetricUpdate(&metric)
+		if err != nil {
+			return err
+		}
 	}
 	fmt.Println("data restored from file")
 	return nil

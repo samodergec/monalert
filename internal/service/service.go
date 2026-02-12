@@ -12,15 +12,18 @@ type Repository interface {
 	MetricUpdate(req *models.Metrics) (*models.Metrics, error)
 	GetMetric(req *models.Metrics) (*models.Metrics, error)
 	GetAllMetrics() []models.Metrics
+	Persist() error
 }
 
 type Monalert struct {
-	store Repository
+	store          Repository
+	persistentMode bool
 }
 
-func NewMonalert(store Repository) *Monalert {
+func NewMonalert(store Repository, persistentMode bool) *Monalert {
 	return &Monalert{
-		store: store,
+		store:          store,
+		persistentMode: persistentMode,
 	}
 }
 
@@ -35,6 +38,12 @@ func (m *Monalert) MetricUpdate(req *models.Metrics) (*models.Metrics, error) {
 	if err != nil {
 		logger.Log.Debug("service: failed for metric update", zap.Error(err))
 		return nil, fmt.Errorf("service: failed to update metric value: %w", err)
+	}
+	if m.persistentMode {
+		err := m.store.Persist()
+		if err != nil {
+			return nil, err
+		}
 	}
 	return resp, nil
 }

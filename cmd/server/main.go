@@ -24,8 +24,12 @@ func main() {
 
 func run() error {
 	logger.Log.Info("Running server", zap.String("log level", flagLogLevel))
-	store := repository.NewStore(flagFileStoragePath)
-	monalertService := service.NewMonalert(store)
+	store := repository.NewStore(flagFileStoragePath, flagStoreInterval == 0)
+	if flagRestore {
+		if err := store.Restore(); err != nil {
+			log.Fatal(err)
+		}
+	}
 	if flagStoreInterval > 0 {
 		go func() {
 			ticker := time.NewTicker(time.Duration(flagStoreInterval) * time.Second)
@@ -37,8 +41,17 @@ func run() error {
 			}
 		}()
 	}
-	if err := handlers.Serve(flagServerAddr, monalertService); err != nil {
-		return fmt.Errorf("failed to start server with config %s: %w", flagServerAddr, err)
+	if flagStoreInterval == 0 {
+		monalertService := service.NewMonalert(store, true)
+		if err := handlers.Serve(flagServerAddr, monalertService); err != nil {
+			return fmt.Errorf("failed to start server with config %s: %w", flagServerAddr, err)
+		}
+		return nil
+	} else {
+		monalertService := service.NewMonalert(store, false)
+		if err := handlers.Serve(flagServerAddr, monalertService); err != nil {
+			return fmt.Errorf("failed to start server with config %s: %w", flagServerAddr, err)
+		}
+		return nil
 	}
-	return nil
 }
