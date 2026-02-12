@@ -113,7 +113,7 @@ func MyLogger() func(http.Handler) http.Handler {
 type Service interface {
 	MetricUpdate(req *models.Metrics) (*models.Metrics, error)
 	GetMetric(req *models.Metrics) (*models.Metrics, error)
-	GetAllMetrics() []string // TODO на это перевести ([]models.Metrics, error)
+	GetAllMetrics() []models.Metrics
 }
 
 type handlers struct {
@@ -268,7 +268,7 @@ func (h *handlers) handleMetricUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) handleGetMetricJSON(w http.ResponseWriter, r *http.Request) {
 	logger.Log.Debug("handleGetMetric: incoming request", zap.String("method", r.Method), zap.String("path", r.URL.Path))
-	var req models.Metrics
+	var req *models.Metrics
 	logger.Log.Debug("decoding request")
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&req); err != nil {
@@ -323,7 +323,12 @@ func (h *handlers) handleGetMetric(rw http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) handleMain(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("content-type", "text/html")
-	_, err := w.Write([]byte(strings.Join(h.monalert.GetAllMetrics(), ", ")))
+	data, err := json.MarshalIndent(h.monalert.GetAllMetrics(), "", " ")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	_, err = w.Write(data)
 	if err != nil {
 		logger.Log.Error("handleMain: write error", zap.Error(err))
 	}

@@ -1,26 +1,31 @@
 package repository
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"monalert/internal/logger"
 	"monalert/internal/models"
-	"strconv"
+	"os"
 	"sync"
 
 	"go.uber.org/zap"
 )
 
 type Store struct {
-	mux          *sync.Mutex
+	mux          *sync.RWMutex
 	gaugeStore   map[string]float64
 	counterStore map[string]int64
+	filePath     string
 }
 
-func NewStore() *Store {
+func NewStore(filepath string, syncOnUpdate bool) *Store {
 	return &Store{
-		mux:          &sync.Mutex{},
+		mux:          &sync.RWMutex{},
 		gaugeStore:   make(map[string]float64),
 		counterStore: make(map[string]int64),
+		filePath:     filepath,
 	}
 }
 
@@ -29,7 +34,7 @@ func (s *Store) MetricUpdate(req *models.Metrics) (*models.Metrics, error) {
 	defer s.mux.Unlock()
 	switch req.MType {
 	case "gauge":
-		logger.Log.Debug("repository: storage updated metric request1", zap.String("type", req.MType), zap.String("name", req.ID))
+		logger.Log.Debug("repository: storage updated metric request", zap.String("type", req.MType), zap.String("name", req.ID))
 		s.gaugeStore[req.ID] = *req.Value
 		val := s.gaugeStore[req.ID]
 		logger.Log.Debug("repository: storage updated metric", zap.String("type", req.MType), zap.String("name", req.ID), zap.Float64("value:", val))
@@ -53,8 +58,8 @@ func (s *Store) MetricUpdate(req *models.Metrics) (*models.Metrics, error) {
 }
 
 func (s *Store) GetMetric(req *models.Metrics) (*models.Metrics, error) {
-	s.mux.Lock()
-	defer s.mux.Unlock()
+	s.mux.RLock()
+	defer s.mux.RUnlock()
 	switch req.MType {
 	case "gauge":
 		if val, ok := s.gaugeStore[req.ID]; ok {
@@ -83,16 +88,73 @@ func (s *Store) GetMetric(req *models.Metrics) (*models.Metrics, error) {
 	}
 }
 
-func (s *Store) GetAllMetrics() []string {
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	metrics := make([]string, 0, len(s.gaugeStore)+len(s.counterStore))
-	for metric := range s.gaugeStore {
-		metrics = append(metrics, fmt.Sprintf("gauge:%s:%s", metric, strconv.FormatFloat(s.gaugeStore[metric], 'f', -1, 64)))
+func (s *Store) GetAllMetrics() []models.Metrics {
+	s.mux.RLock()
+	defer s.mux.RUnlock()
+	allMetrics := make([]models.Metrics, 0, len(s.gaugeStore)+len(s.counterStore))
+	for name, value := range s.gaugeStore {
+		allMetrics = append(allMetrics, models.Metrics{
+			ID:    name,
+			MType: "gauge",
+			Value: &value,
+		})
 	}
-	for metric := range s.counterStore {
-		metrics = append(metrics, fmt.Sprintf("counter:%s:%d", metric, s.counterStore[metric]))
+	for name, delta := range s.counterStore {
+		allMetrics = append(allMetrics, models.Metrics{
+			ID:    name,
+			MType: "counter",
+			Delta: &delta,
+		})
 	}
-	logger.Log.Debug("repository: storage provided all metric", zap.Any("metrics:", metrics))
-	return metrics
+	logger.Log.Debug("repository: storage provided all metric")
+	return allMetrics
+}
+
+func (s *Store) Persist() error {
+	file, err := os.OpenFile(s.filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	data, err := json.MarshalIndent(s.GetAllMetrics(), "", " ")
+	if err != nil {
+		return err
+	}
+
+	_, err = file.Write(data)
+	if err != nil {
+		return err
+	}
+	logger.Log.Debug("data saved to file")
+	return nil
+}
+
+func (s *Store) Restore() error {
+	file, err := os.OpenFile(s.filePath, os.O_RDONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("cannot open file for restore: %w, file path: %s", err, s.filePath)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return fmt.Errorf("cannot read restore file %w", err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		// файл пустой — просто нечего восстанавливать
+		logger.Log.Warn("restore file was empty")
+		return nil
+	}
+
+	var allMetrics []models.Metrics
+	if err := json.Unmarshal(data, &allMetrics); err != nil {
+		return fmt.Errorf("cannot unmarshal data in restore file %w", err)
+	}
+	for _, metric := range allMetrics {
+		_, err = s.MetricUpdate(&metric)
+		if err != nil {
+			return fmt.Errorf("cannot add metric from restore file %w", err)
+		}
+	}
+	fmt.Println("data restored from file")
+	return nil
 }
