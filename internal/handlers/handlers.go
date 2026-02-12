@@ -268,7 +268,7 @@ func (h *handlers) handleMetricUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) handleGetMetricJSON(w http.ResponseWriter, r *http.Request) {
 	logger.Log.Debug("handleGetMetric: incoming request", zap.String("method", r.Method), zap.String("path", r.URL.Path))
-	var req models.Metrics
+	var req *models.Metrics
 	logger.Log.Debug("decoding request")
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&req); err != nil {
